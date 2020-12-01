@@ -134,7 +134,7 @@ class LocalizationNode:
 
         return pos_range
 
-    def prob_scan_cell(self, scan_data, cell_ranges):
+    def prob_scan_cell(self, scan_data, cell_ranges, cell_data):
         probs = np.zeros(4)
         for i in range(len(cell_ranges)):
             if(scan_data[i]==cell_ranges[i]):
@@ -143,12 +143,12 @@ class LocalizationNode:
                 probs[i]=0.1
         return np.prod(probs)
 
-    def prob_scan_all_cells(self, scan_data, map_ranges):
+    def prob_scan_all_cells(self, scan_data, map_ranges, map_data):
         scan_probs = np.full((20, 20), -1.)
         for i in range(len(map_ranges)):
             for j in range(len(map_ranges[0])):
                 if not (-1 in map_ranges[i][j]):
-                    scan_probs[i][j] = self.prob_scan_cell(scan_data, map_ranges[i][j])
+                    scan_probs[i][j] = self.prob_scan_cell(scan_data, map_ranges[i][j], map_data[i][j])
                 else:
                     scan_probs[i][j] = 0
         return scan_probs
@@ -164,8 +164,8 @@ class LocalizationNode:
     def prob_move_cell(self, move, map_data, x, y):
         probs = np.zeros(5)
         if (move == 'N'):
-            if(self.cell_checker(map_data, x, y+1)):
-                probs[0] = self.move_probs[0] * map_data[x, y+1]
+            if(self.cell_checker(map_data, x, y-1)):
+                probs[0] = self.move_probs[0] * map_data[x, y-1]
             if(self.cell_checker(map_data, x+1, y)):
                 probs[1] = self.move_probs[1] * map_data[x+1, y]
             if(self.cell_checker(map_data, x-1, y)):
@@ -173,8 +173,8 @@ class LocalizationNode:
             probs[3] = self.move_probs[3]
             probs[4] = self.move_probs[4] * map_data[x, y]
         elif (move == 'W'):
-            if(self.cell_checker(map_data, x+1, y)):
-                probs[0] = self.move_probs[0] * map_data[x+1, y]
+            if(self.cell_checker(map_data, x-1, y)):
+                probs[0] = self.move_probs[0] * map_data[x-1, y]
             if(self.cell_checker(map_data, x, y+1)):
                 probs[1] = self.move_probs[1] * map_data[x, y+1]
             if(self.cell_checker(map_data, x, y-1)):
@@ -182,8 +182,8 @@ class LocalizationNode:
             probs[3] = self.move_probs[3]
             probs[4] = self.move_probs[4] * map_data[x, y]
         elif (move == 'S'):
-            if(self.cell_checker(map_data, x, y-1)):
-                probs[0] = self.move_probs[0] * map_data[x, y-1]
+            if(self.cell_checker(map_data, x, y+1)):
+                probs[0] = self.move_probs[0] * map_data[x, y+1]
             if(self.cell_checker(map_data, x+1, y)):
                 probs[1] = self.move_probs[1] * map_data[x+1, y]
             if(self.cell_checker(map_data, x-1, y)):
@@ -191,8 +191,8 @@ class LocalizationNode:
             probs[3] = self.move_probs[3]
             probs[4] = self.move_probs[4] * map_data[x, y]
         elif (move == 'E'):
-            if(self.cell_checker(map_data, x-1, y)):
-                probs[0] = self.move_probs[0] * map_data[x-1, y]
+            if(self.cell_checker(map_data, x+1, y)):
+                probs[0] = self.move_probs[0] * map_data[x+1, y]
             if(self.cell_checker(map_data, x, y+1)):
                 probs[1] = self.move_probs[1] * map_data[x, y+1]
             if(self.cell_checker(map_data, x, y-1)):
@@ -201,8 +201,6 @@ class LocalizationNode:
             probs[4] = self.move_probs[4] * map_data[x, y]
         else:
             print('Move command is not NWSE')
-        
-        probs = probs
 
         return np.sum(probs)
 
@@ -219,39 +217,38 @@ class LocalizationNode:
     def run(self, rate: float = 1):
         subrate = rospy.Rate(rate)
 
-        last_map = None
-
         while (self.map_data is None or self.scan_data is None) and not rospy.is_shutdown():
             subrate.sleep()
+
+        last_map = None
+        map_ranges = self.give_ranges(self.map_data)
+
+        num_free_cells = np.sum(self.map_data == 0)
+        prob_cell = 1/num_free_cells
 
         while not rospy.is_shutdown():
             local_move = self.move_data
             local_map = self.map_data.astype('float64')
             local_scan = self.scan_data
 
-            num_free_cells = np.sum(self.map_data == 0)
-            prob_cell = 1/num_free_cells
-            
-            map_ranges = self.give_ranges(local_map)
-
-            map_scan_prob = self.prob_scan_all_cells(local_scan, map_ranges)
-
             if(local_move is None):
                 local_map = np.where(local_map == 0, prob_cell, local_map)
             else:
                 local_move = self.move_data.data
-                local_map = np.where(local_map == 0, prob_cell/4, local_map)
-                if(last_map is not None):
-                    local_map = local_map + last_map
-                    print(np.max(local_map))
+                local_map = local_map + last_map
+                local_map = np.where(local_map == 0, 0.00001, local_map)
+
                 local_map = self.prob_move_all_cells(local_move, local_map)
-            
+
+            map_scan_prob = self.prob_scan_all_cells(local_scan, map_ranges, local_map)
+
             local_map = local_map*map_scan_prob
 
             arr_sum = np.sum(local_map)
             local_map = np.where(local_map != 0, local_map/arr_sum, local_map)
-            #times 100 and round to nearest int
             last_map = local_map
+            
+            #times 100 and round to nearest int
             local_map = local_map * 100
             local_map = np.round(local_map)
 
@@ -260,6 +257,7 @@ class LocalizationNode:
             self.pub_posestimate.publish(pos_estimate_msg)
 
             best_x, best_y = np.unravel_index(local_map.argmax(), local_map.shape)
+            print(best_x, best_y)
             self.msg_marker.pose.position.x = best_x + 0.5
             self.msg_marker.pose.position.y = best_y + 0.5
 

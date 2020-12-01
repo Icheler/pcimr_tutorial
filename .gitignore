@@ -1,2 +1,4 @@
 __pycache__
 .pyc
+.vscode
+pcimr_simulation/config/simple-sim.rviz
