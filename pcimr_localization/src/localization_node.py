@@ -49,6 +49,7 @@ class LocalizationNode:
         self.map_msg = None
         self.move_data = None
 
+        #get parameters for move
         self.move_probs = rospy.get_param("robot_move_probabilities", [0.9, 0.04, 0.04, 0.0, 0.02])
 
         #subscriber 
@@ -79,16 +80,20 @@ class LocalizationNode:
         self.msg_marker.color.b = 1.0
         self.msg_marker.pose.orientation = Quaternion(0, 0, 0, 1)
 
+    #Callback for map data
     def cb_map(self, msg):
         self.map_msg = msg
         self.map_data = np.transpose(np.asarray(msg.data, dtype=np.int8).reshape(msg.info.width, msg.info.height))
 
+    #Callback for move data
     def cb_move(self, msg):
         self.move_data = msg
 
+    #Callback for scan data
     def cb_scan(self, msg):
         self.scan_data = msg.ranges
 
+    #Iterates over the entire map to assign possible ranges to all cells which are free
     def give_ranges(self, map):
         map_ranges = np.full((20, 20, 4), -1)
         for i in range(len(map)):
@@ -97,6 +102,7 @@ class LocalizationNode:
                     map_ranges[i][j] = self.give_range(map, i, j)
         return map_ranges
 
+    #Iterates through all directions to assign possible ranges to a single cell
     def give_range(self, map, x, y):
         #north
         pos_range = np.full(4, -1)
@@ -134,6 +140,7 @@ class LocalizationNode:
 
         return pos_range
 
+    #Gets the probability of being in a cell based on scan data
     def prob_scan_cell(self, scan_data, cell_ranges, cell_data):
         probs = np.zeros(4)
         for i in range(len(cell_ranges)):
@@ -143,6 +150,7 @@ class LocalizationNode:
                 probs[i]=0.1
         return np.prod(probs)
 
+    #Iterates through all cells to get cell_probability from scan
     def prob_scan_all_cells(self, scan_data, map_ranges, map_data):
         scan_probs = np.full((20, 20), -1.)
         for i in range(len(map_ranges)):
@@ -153,6 +161,7 @@ class LocalizationNode:
                     scan_probs[i][j] = 0
         return scan_probs
     
+    #Checks if cell is free/exists
     def cell_checker(self, map_data, x, y):
         try:
             if(map_data[x][y] is None or map_data[x][y] == -1 or map_data[x][y] == 100):
@@ -161,6 +170,7 @@ class LocalizationNode:
         except IndexError:
             return 0
 
+    #Gets the probability for moving into a specific cell
     def prob_move_cell(self, move, map_data, x, y):
         probs = np.zeros(5)
         if (move == 'N'):
@@ -204,6 +214,7 @@ class LocalizationNode:
 
         return np.sum(probs)
 
+    #Iterates through all cells to get cell_probability from movement
     def prob_move_all_cells(self, move, map_data):
         move_probs = np.full((20, 20), 0.)
         for i in range(len(map_data)):
@@ -214,50 +225,64 @@ class LocalizationNode:
                     move_probs[i][j] = 0
         return move_probs
 
+    #Standard ros node run()
     def run(self, rate: float = 1):
         subrate = rospy.Rate(rate)
 
+        #Wait for data before starting
         while (self.map_data is None or self.scan_data is None) and not rospy.is_shutdown():
             subrate.sleep()
 
         last_map = None
+
+        #get ranges for all cells
         map_ranges = self.give_ranges(self.map_data)
 
+        #get base probability for all cells
         num_free_cells = np.sum(self.map_data == 0)
         prob_cell = 1/num_free_cells
 
+        #Standard ros node while loop
         while not rospy.is_shutdown():
+            #assign latest move, map and scan data
             local_move = self.move_data
             local_map = self.map_data.astype('float64')
             local_scan = self.scan_data
 
+            #Check if first move or not
             if(local_move is None):
                 local_map = np.where(local_map == 0, prob_cell, local_map)
             else:
+            #assign local_move.data when local_move is not None
                 local_move = self.move_data.data
+                #add last_map from previous iteration to standard map
                 local_map = local_map + last_map
+                #give base probability for remaining free cells
                 local_map = np.where(local_map == 0, 0.00001, local_map)
 
                 local_map = self.prob_move_all_cells(local_move, local_map)
 
             map_scan_prob = self.prob_scan_all_cells(local_scan, map_ranges, local_map)
 
+            #multiply probabilities to get posterior
             local_map = local_map*map_scan_prob
-
+            
+            #normalize
             arr_sum = np.sum(local_map)
             local_map = np.where(local_map != 0, local_map/arr_sum, local_map)
             last_map = local_map
             
-            #times 100 and round to nearest int
+            #times 100 and round to nearest int to get back to OccupanyGridMap
             local_map = local_map * 100
             local_map = np.round(local_map)
 
             pos_estimate_msg = numpy_to_occupancy_grid(local_map)
 
+            #publish position estimate
             self.pub_posestimate.publish(pos_estimate_msg)
 
+            #get position of most likely location and pass to message
             best_x, best_y = np.unravel_index(local_map.argmax(), local_map.shape)
-            print(best_x, best_y)
             self.msg_marker.pose.position.x = best_x + 0.5
             self.msg_marker.pose.position.y = best_y + 0.5
 
@@ -266,16 +291,8 @@ class LocalizationNode:
             self.msg_pos.x = best_x
             self.msg_pos.y = best_y
 
-            self.pub_pos.publish(self.msg_pos)
-
-            #prob for current position
             
-            #probability for sensing
-
-            #normalize
-
-            #prints
-            #rotate array back 
+            self.pub_pos.publish(self.msg_pos)
 
             subrate.sleep()
 

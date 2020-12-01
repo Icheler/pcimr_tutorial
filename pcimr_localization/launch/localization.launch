@@ -1,7 +1,7 @@
 <?xml version="1.0"?>
 <launch>
     <arg name="robot_move_probabilities" default="[0.9, 0.04, 0.04, 0.0, 0.02]"/> 
-    <arg name="rand_ini_pos" default="True"/> 
+    <arg name="rand_ini_pos" default="False"/> 
 
     <node pkg="pcimr_simulation" type="simple_sim_node" name="simple_sim_node" output="screen" respawn="false" respawn_delay="0">
         <rosparam param="robot_move_probabilities" subst_value="True">$(arg robot_move_probabilities)</rosparam> 
