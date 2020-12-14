@@ -12,6 +12,13 @@ from nav_msgs.msg import OccupancyGrid, Path
 from std_msgs.msg import String
 from visualization_msgs.msg import Marker
 
+class Node:
+    def __init__(self, point, g, h):
+        self.point = point
+        self.g = g
+        self.h = h
+        self.f = g+h
+
 class NavigationNode:
     def __init__(self):
         self.robot_pos = None
@@ -38,6 +45,26 @@ class NavigationNode:
     def heuristic(self, start, goal):
         return np.abs(start.x-goal.x)+np.abs(start.y-goal.y)
 
+    def a_star(self, start, goal):
+        openset = set()
+        closedset = set()
+
+        start_node = Node.__init__(self, start, 0, self.heuristic(start, goal))
+
+        openset.add(start_node)
+
+        while(len(openset)==0):
+            current = min(openset, key=lambda x:x.f)
+            openset.remove(current)
+            closedset.add(current)
+
+            if(current.point==goal):
+                print('Finished!')
+
+            childset = set()
+            for i in range(4):
+                
+
     def run(self, rate: float=1):
         subrate = rospy.Rate(rate)
 
@@ -48,6 +75,8 @@ class NavigationNode:
             while(0 <= self.map[self.goal.x][self.goal.y] <= 99):
                 print('goal not reachable, please change it')
             
+
+
 
     
 
