@@ -1,0 +1,58 @@
+#!/usr/bin/env python
+
+import sys
+
+import numpy as np
+
+import roslib
+import rospy
+
+from geometry_msgs.msg import Point, Pose, Quaternion
+from nav_msgs.msg import OccupancyGrid, Path
+from std_msgs.msg import String
+from visualization_msgs.msg import Marker
+
+class NavigationNode:
+    def __init__(self):
+        self.robot_pos = None
+        self.map = None
+        self.goal = None
+
+        self.sub_pos = rospy.Subscriber('/robot_pos', Point, self.cb_pos)
+        self.sub_map = rospy.Subscriber('/map', OccupancyGrid, self.cb_map)
+        self.sub_goal = rospy.Subscriber('/move_base_simple/goal', Point, self.cb_goal)
+
+        self.pub_path = rospy.Publisher('/global_path', Path, latch=True, queue_size=10)
+        self.pub_goal_marker = rospy.Publisher('/goal_marker', Marker, queue_size=10)
+        self.pub_path_marker = rospy.Publisher('/path_marker', Marker, queue_size=10)
+
+    def cb_pos(self, msg):
+        self.robot_pos = msg
+
+    def cb_map(self, msg):
+        self.map = np.transpose(np.asarray(msg.data, dtype=np.int8).reshape(msg.info.width, msg.info.height))
+
+    def cb_goal(self, msg):
+        self.goal = msg
+
+    def heuristic(self, start, goal):
+        return np.abs(start.x-goal.x)+np.abs(start.y-goal.y)
+
+    def run(self, rate: float=1):
+        subrate = rospy.Rate(rate)
+
+        while (self.map is None or self.robot_pos is None or self.goal is None) and not rospy.is_shutdown():
+            subrate.sleep()
+
+        while not rospy.is_shutdown():
+            while(0 <= self.map[self.goal.x][self.goal.y] <= 99):
+                print('goal not reachable, please change it')
+            
+
+    
+
+__name__ == "__main__"
+rospy.init_node('navigation_node')
+
+navigation_node = NavigationNode()
+navigation_node.run(rate=1)
