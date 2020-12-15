@@ -7,7 +7,7 @@ import numpy as np
 import roslib
 import rospy
 
-from geometry_msgs.msg import Point, Pose, Quaternion
+from geometry_msgs.msg import Point, Pose, Quaternion, PoseStamped
 from nav_msgs.msg import OccupancyGrid, Path
 from std_msgs.msg import String
 from visualization_msgs.msg import Marker
@@ -20,82 +20,137 @@ class Node:
         self.f = g+h
         self.parent = parent
 
+    def __eq__(self, other):
+        return (self.point.x == other.point.x and self.point.y == other.point.y)
+
 class NavigationNode:
     def __init__(self):
         self.robot_pos = None
         self.map = None
         self.goal = None
-
+        self.width = None
+        self.height = None
+        
         self.sub_pos = rospy.Subscriber('/robot_pos', Point, self.cb_pos)
         self.sub_map = rospy.Subscriber('/map', OccupancyGrid, self.cb_map)
-        self.sub_goal = rospy.Subscriber('/move_base_simple/goal', Point, self.cb_goal)
+        self.sub_goal = rospy.Subscriber('/move_base_simple/goal', PoseStamped, self.cb_goal)
 
         self.pub_path = rospy.Publisher('/global_path', Path, latch=True, queue_size=10)
-        self.pub_goal_marker = rospy.Publisher('/goal_marker', Marker, queue_size=10)
-        self.pub_path_marker = rospy.Publisher('/path_marker', Marker, queue_size=10)
+        self.pub_goal_marker = rospy.Publisher('/visualization/goal', Marker, queue_size=10)
+        self.pub_path_marker = rospy.Publisher('/visualization/plan', Marker, latch=True, queue_size=10)
+
+        self.goal_marker = Marker()
+        self.goal_marker.header.frame_id = "map"
+        self.goal_marker.ns = "goal_marker"
+        self.goal_marker.id = 0
+        self.goal_marker.type = Marker.CUBE
+        self.goal_marker.action = Marker.ADD
+        self.goal_marker.scale.x = 1
+        self.goal_marker.scale.y = 1
+        self.goal_marker.scale.z = 0.2
+        self.goal_marker.color.a = 1.0
+        self.goal_marker.color.r = 0.0
+        self.goal_marker.color.g = 0.8
+        self.goal_marker.color.b = 1.0
+        self.goal_marker.pose.orientation = Quaternion(0, 0, 0, 1)
+
+        self.path_marker = Marker()
+        self.path_marker.header.frame_id = "map"
+        self.path_marker.ns = "path_marker"
+        self.path_marker.id = 1
+        self.path_marker.type = Marker.LINE_STRIP
+        self.path_marker.action = Marker.ADD
+        self.path_marker.scale.x = 1
+        self.path_marker.color.a = 1.0
+        self.path_marker.color.r = 1.0
+        self.path_marker.color.g = 0.0
+        self.path_marker.color.b = 1.0
+        self.path_marker.pose.orientation = Quaternion(0, 0, 0, 1)
 
     def cb_pos(self, msg):
         self.robot_pos = msg
 
     def cb_map(self, msg):
         self.map = np.transpose(np.asarray(msg.data, dtype=np.int8).reshape(msg.info.width, msg.info.height))
+        self.width = msg.info.width
+        self.height = msg.info.height
 
     def cb_goal(self, msg):
-        self.goal = msg
+        pre_conversion = msg.pose.position
+        self.goal = Point()
+        self.goal.x = int(pre_conversion.x)
+        self.goal.y = int(pre_conversion.y)
 
     def heuristic(self, start, goal):
         return np.abs(start.x-goal.x)+np.abs(start.y-goal.y)
 
     def a_star(self, start, goal):
-        openset = set()
-        closedset = set()
+        openlist = []
+        closedlist = []
 
-        start_node = Node.__init__(self, start, 0, self.heuristic(start, goal), None)
+        start_node = Node(start, 0, self.heuristic(start, goal), None)
 
-        openset.add(start_node)
+        openlist.append(start_node)
+        while(len(openlist) > 0 and not rospy.is_shutdown()) :
+            current = openlist[0]
+            current_index = 0
+            for index, item in enumerate(openlist):
+                if item.f < current.f :
+                    current = item
+                    current_index = index
+            
+            openlist.pop(current_index)
+            closedlist.append(current)
 
-        while(len(openset)==0):
-            current = min(openset, key=lambda x:x.f)
-            openset.remove(current)
-            closedset.add(current)
-
-            if(current.point==goal):
+            if(current.point.x==goal.x and current.point.y == goal.y):
                 path = []
                 current_node = current
                 while current_node is not None:
-                    path.append(current_node.point)
-                    current = current_node.parent
-                print(path[::-1])
+                    pose = PoseStamped()
+                    pose.header.stamp = rospy.Time.now()
+                    pose.header.frame_id = "/map"
+                    pose.pose.position = current_node.point
+                    pose.pose.orientation.x = 1
+                    pose.pose.orientation.y = 0
+                    pose.pose.orientation.z = 0
+                    pose.pose.orientation.w = 0
+                    path.append(pose)
+                    current_node = current_node.parent
                 return path[::-1]
 
             x = 1
-            y = 1
+            y = 0
             for i in range(4):
                 new_x = current.point.x - x
                 new_y = current.point.y - y
-                new_point = Point(new_x, new_y)
-                new_node = Node.__init__(self, new_point, current.g + 1, self.heuristic(new_point, goal), current)
-                if(self.valid_cell(new_point)):
-                    #TODO
-                    if new_node not in openset:
-                        openset.add(new_node)
-                    else:
-                        elem = openset.pop()
-                        if(elem.g >= new_node.g):
-                            openset.add(elem)
+                new_point = Point(new_x, new_y, 0)
+                new_node = Node(new_point, current.g + 1, self.heuristic(new_point, goal), current)
+
+                if(i == 0):
+                    x = -1
+                elif(i == 1):
+                    x = 0
+                    y = 1
+                else:
+                    y = -1
+
+                if(0 <= new_x <= self.width-1 and 0 <= new_y <= self.height-1):
+                    if(self.valid_cell(new_point)):
+                        if new_node in closedlist:
+                            continue
+                        if new_node not in openlist:
+                            openlist.append(new_node)
                         else:
-                            openset.add(new_node)
-                else:
-                    if new_node not in closedset:
-                        closedset.add(new_node)
-                    continue
-                if(i%2 == 0):
-                    x*=-1
-                else:
-                    y*=-1
-
-
-                
+                            elem = openlist.pop(openlist.index(new_node))
+                            if(elem.g >= new_node.g):
+                                openlist.append(elem)
+                            else:
+                                openlist.append(new_node)
+                    else:
+                        if new_node in closedlist:
+                            continue
+                        else:
+                            closedlist.append(new_node)                
 
     def valid_cell(self, cell):
         return (0 <= self.map[cell.x][cell.y] <= 99)
@@ -107,13 +162,38 @@ class NavigationNode:
             subrate.sleep()
 
         while not rospy.is_shutdown():
-            while(0 <= self.map[self.goal.x][self.goal.y] <= 99):
+
+            self.goal_marker.pose.position.x = self.goal.x + 0.5
+            self.goal_marker.pose.position.y = self.goal.y + 0.5
+            self.pub_goal_marker.publish(self.goal_marker)
+
+            if(not self.valid_cell(self.goal)):
                 print('goal not reachable, please change it')
+                subrate.sleep()
+                continue
             
+            start = Point()
+            start.x = int(self.robot_pos.x)
+            start.y = int(self.robot_pos.y)
+            start.z = int(self.robot_pos.z)
+            
+            path = Path()
+            path.poses = self.a_star(start, self.goal)
+            path.header.frame_id = "/map"
+            path.header.stamp = rospy.Time.now()
 
+            self.pub_path.publish(path)
 
+            for i in range(len(path.poses)):
+                point_change = Point()
+                point_change.x = path.poses[i].pose.position.x + 0.5
+                point_change.y = path.poses[i].pose.position.y + 0.5
+                self.path_marker.points.append(point_change)
 
-    
+            self.pub_path_marker.publish(self.path_marker)
+
+            subrate.sleep()
+            break
 
 __name__ == "__main__"
 rospy.init_node('navigation_node')

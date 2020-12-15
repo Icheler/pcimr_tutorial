@@ -6,7 +6,9 @@
         <rosparam param="robot_move_probabilities" subst_value="True">$(arg robot_move_probabilities)</rosparam> 
     </node>
 
-    <!-- <node pkg="pcimr_navigation" type="robot_mover" name="robot_mover_node" /> -->
+    <node pkg="pcimr_navigation" type="robot_mover" name="robot_mover_node" />
+
+    <node pkg="pcimr_navigation" type="navigation_node" name="navigation_node_mover" respawn="true"/>
 
     <node pkg="rviz" type="rviz" name="rviz" output="screen" args="-d $(find pcimr_simulation)/config/simple-sim.rviz"/>
 </launch>
