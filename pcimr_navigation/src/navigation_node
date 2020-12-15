@@ -30,11 +30,13 @@ class NavigationNode:
         self.goal = None
         self.width = None
         self.height = None
-        
+
+        #Subscriber
         self.sub_pos = rospy.Subscriber('/robot_pos', Point, self.cb_pos)
         self.sub_map = rospy.Subscriber('/map', OccupancyGrid, self.cb_map)
         self.sub_goal = rospy.Subscriber('/move_base_simple/goal', PoseStamped, self.cb_goal)
 
+        #Publisher
         self.pub_path = rospy.Publisher('/global_path', Path, latch=True, queue_size=10)
         self.pub_goal_marker = rospy.Publisher('/visualization/goal', Marker, queue_size=10)
         self.pub_path_marker = rospy.Publisher('/visualization/plan', Marker, latch=True, queue_size=10)
@@ -67,6 +69,7 @@ class NavigationNode:
         self.path_marker.color.b = 1.0
         self.path_marker.pose.orientation = Quaternion(0, 0, 0, 1)
 
+    #Callbacks for pos, map and goal
     def cb_pos(self, msg):
         self.robot_pos = msg
 
@@ -75,15 +78,18 @@ class NavigationNode:
         self.width = msg.info.width
         self.height = msg.info.height
 
+    #discretize goal in cb
     def cb_goal(self, msg):
         pre_conversion = msg.pose.position
         self.goal = Point()
         self.goal.x = int(pre_conversion.x)
         self.goal.y = int(pre_conversion.y)
 
+    #h() takes absolute travelled path to goal not direct distance from start to goal
     def heuristic(self, start, goal):
         return np.abs(start.x-goal.x)+np.abs(start.y-goal.y)
 
+    #implementation of a_star algorithm
     def a_star(self, start, goal):
         openlist = []
         closedlist = []
@@ -91,17 +97,22 @@ class NavigationNode:
         start_node = Node(start, 0, self.heuristic(start, goal), None)
 
         openlist.append(start_node)
+        
+        #check if nodes exist in openlist or rospy is shutdown
         while(len(openlist) > 0 and not rospy.is_shutdown()) :
             current = openlist[0]
             current_index = 0
+            #find smallest f in openlist
             for index, item in enumerate(openlist):
                 if item.f < current.f :
                     current = item
                     current_index = index
             
+            #remove from openlist and add to closedlist
             openlist.pop(current_index)
             closedlist.append(current)
 
+            #goal checker and path creator
             if(current.point.x==goal.x and current.point.y == goal.y):
                 path = []
                 current_node = current
@@ -116,10 +127,12 @@ class NavigationNode:
                     pose.pose.orientation.w = 0
                     path.append(pose)
                     current_node = current_node.parent
+                #return from start to finish i.e in reverse order
                 return path[::-1]
 
             x = 1
             y = 0
+            #create children and check for validity
             for i in range(4):
                 new_x = current.point.x - x
                 new_y = current.point.y - y
@@ -134,56 +147,70 @@ class NavigationNode:
                 else:
                     y = -1
 
+                #check if child is in map
                 if(0 <= new_x <= self.width-1 and 0 <= new_y <= self.height-1):
                     if(self.valid_cell(new_point)):
+                        #check if child is in closedlist
                         if new_node in closedlist:
                             continue
                         if new_node not in openlist:
                             openlist.append(new_node)
                         else:
+                            #check if child is better than previous element in openlist at the same position
                             elem = openlist.pop(openlist.index(new_node))
                             if(elem.g >= new_node.g):
                                 openlist.append(elem)
                             else:
                                 openlist.append(new_node)
                     else:
+                        #add non-valid childs to closedlist if needed
                         if new_node in closedlist:
                             continue
                         else:
                             closedlist.append(new_node)                
-
+    
+    #check validity of cell
     def valid_cell(self, cell):
         return (0 <= self.map[cell.x][cell.y] <= 99)
 
+    #standard ros runner
     def run(self, rate: float=1):
         subrate = rospy.Rate(rate)
 
+        #wait for input
         while (self.map is None or self.robot_pos is None or self.goal is None) and not rospy.is_shutdown():
             subrate.sleep()
 
+        #standard rospy shutdown loop
         while not rospy.is_shutdown():
 
+            #publish goal
             self.goal_marker.pose.position.x = self.goal.x + 0.5
             self.goal_marker.pose.position.y = self.goal.y + 0.5
             self.pub_goal_marker.publish(self.goal_marker)
 
+            #print if cell is not reachable and loop again
             if(not self.valid_cell(self.goal)):
                 print('goal not reachable, please change it')
                 subrate.sleep()
                 continue
             
+            #define start
             start = Point()
             start.x = int(self.robot_pos.x)
             start.y = int(self.robot_pos.y)
             start.z = int(self.robot_pos.z)
             
+            #define and assign path
             path = Path()
             path.poses = self.a_star(start, self.goal)
             path.header.frame_id = "/map"
             path.header.stamp = rospy.Time.now()
 
+            #publish path 
             self.pub_path.publish(path)
 
+            #assign poses to line_strip
             for i in range(len(path.poses)):
                 point_change = Point()
                 point_change.x = path.poses[i].pose.position.x + 0.5
