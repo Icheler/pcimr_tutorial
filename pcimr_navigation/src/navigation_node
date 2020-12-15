@@ -13,11 +13,12 @@ from std_msgs.msg import String
 from visualization_msgs.msg import Marker
 
 class Node:
-    def __init__(self, point, g, h):
+    def __init__(self, point, g, h, parent):
         self.point = point
         self.g = g
         self.h = h
         self.f = g+h
+        self.parent = parent
 
 class NavigationNode:
     def __init__(self):
@@ -49,7 +50,7 @@ class NavigationNode:
         openset = set()
         closedset = set()
 
-        start_node = Node.__init__(self, start, 0, self.heuristic(start, goal))
+        start_node = Node.__init__(self, start, 0, self.heuristic(start, goal), None)
 
         openset.add(start_node)
 
@@ -59,11 +60,45 @@ class NavigationNode:
             closedset.add(current)
 
             if(current.point==goal):
-                print('Finished!')
+                path = []
+                current_node = current
+                while current_node is not None:
+                    path.append(current_node.point)
+                    current = current_node.parent
+                print(path[::-1])
+                return path[::-1]
 
-            childset = set()
+            x = 1
+            y = 1
             for i in range(4):
+                new_x = current.point.x - x
+                new_y = current.point.y - y
+                new_point = Point(new_x, new_y)
+                new_node = Node.__init__(self, new_point, current.g + 1, self.heuristic(new_point, goal), current)
+                if(self.valid_cell(new_point)):
+                    #TODO
+                    if new_node not in openset:
+                        openset.add(new_node)
+                    else:
+                        elem = openset.pop()
+                        if(elem.g >= new_node.g):
+                            openset.add(elem)
+                        else:
+                            openset.add(new_node)
+                else:
+                    if new_node not in closedset:
+                        closedset.add(new_node)
+                    continue
+                if(i%2 == 0):
+                    x*=-1
+                else:
+                    y*=-1
+
+
                 
+
+    def valid_cell(self, cell):
+        return (0 <= self.map[cell.x][cell.y] <= 99)
 
     def run(self, rate: float=1):
         subrate = rospy.Rate(rate)
